@@ -1,7 +1,8 @@
 @import CoreFoundation;
 @import Cocoa;
-#include <CoreServices/CoreServices.h>
-#include <QuickLook/QuickLook.h>
+@import QuickLook;
+@import CoreServices;
+@import WebKit;
 #import "Highlight.h"
 
 
@@ -18,13 +19,35 @@ OSStatus GeneratePreviewForURL(void *thisInterface, QLPreviewRequestRef preview,
 {
     @autoreleasepool {
         NSString *input = [[NSString alloc] initWithContentsOfURL:(__bridge NSURL * _Nonnull)(url) encoding:NSUTF8StringEncoding error:nil];
-        CFBundleRef bundle = QLPreviewRequestGetGeneratorBundle(preview);
-        CFStringRef formatted = highlight_run((__bridge CFStringRef)(input), bundle);
-        CFDictionaryRef dict = CFDictionaryCreate(NULL, NULL, NULL, 0, NULL, NULL);
-        CFDataRef data1 = CFStringCreateExternalRepresentation(NULL, formatted, kCFStringEncodingUTF8, 0);
-        QLPreviewRequestSetDataRepresentation(preview, data1, kUTTypeHTML, dict);
-        CFRelease(dict);
-        CFRelease(data1);
+        if (input) {
+            CFBundleRef bundle = QLPreviewRequestGetGeneratorBundle(preview);
+            NSString* _html = (__bridge NSString *)(highlight_run((__bridge CFStringRef)(input), bundle));
+            NSRect _rect = NSMakeRect(0.0, 0.0, 600.0, 800.0);
+            NSSize maxSize = NSMakeSize(800, 600);
+//            float _scale = 5 * maxSize.height / 800.0;
+            NSSize _scaleSize = NSMakeSize(1, 1);
+            CGSize _thumbSize = NSSizeToCGSize((CGSize) { maxSize.width * (600.0/800.0), maxSize.height});
+
+            dispatch_sync(dispatch_get_main_queue(), ^{
+                // Create the webview to display the thumbnail
+                WebView *_webView = [[WebView alloc] initWithFrame:_rect];
+                [_webView scaleUnitSquareToSize:_scaleSize];
+                [_webView.mainFrame.frameView setAllowsScrolling:NO];
+                [_webView.mainFrame loadHTMLString:_html baseURL:nil];
+
+                while([_webView isLoading]) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
+                [_webView display];
+
+                // Draw the webview in the correct context
+                CGContextRef _context = QLPreviewRequestCreateContext(preview, _thumbSize, false, NULL);
+                if (_context) {
+                    NSGraphicsContext* _graphicsContext = [NSGraphicsContext graphicsContextWithGraphicsPort:(void *)_context flipped:_webView.isFlipped];
+                    [_webView displayRectIgnoringOpacity:_webView.bounds inContext:_graphicsContext];
+                    QLPreviewRequestFlushContext(preview, _context);
+                    CFRelease(_context);
+                }
+            });
+        }
     }
     return noErr;
 }
